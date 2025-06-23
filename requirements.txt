@@ -1,1 +1,9 @@
 ultralytics
+easyocr
+opencv-python
+streamlit
+pytesseract
+supervision
+inference
+filterpy 
+roboflow
