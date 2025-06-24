@@ -13,9 +13,11 @@ from tracking.bytetrack_tracker import ByteTrackTracker
 # Model selection UI
 st.sidebar.title("Model Selection")
 
-detector_name = st.sidebar.selectbox("Detection Model", ["YOLOv8n finetuned", "YOLOv8m", "YOLOv8l"])
+detector_name = st.sidebar.selectbox("Detection Model", ["YOLOv8n finetuned", "YOLOv8m", "YOLOv8l", "OpenALPR"])
 ocr_name = st.sidebar.selectbox("OCR Model", ["PaddleOCR"])
 tracker_name = st.sidebar.selectbox("Tracker", ["DeepSORT", "ByteTrack"])
+# Frame skipping for real-time
+frame_skip = st.sidebar.slider("Frame Skip Interval", 1, 10, 3)
 
 # Model loader
 if detector_name == "YOLOv8n finetuned":
@@ -26,6 +28,9 @@ elif detector_name == "YOLOv8m":
     detector = YOLODetector(weights_path="yolov8m.pt")
 elif detector_name == "YOLOv8l":
     detector = YOLODetector(weights_path="yolov8l.pt")
+elif detector_name == "OpenALPR":
+    from detectors.openalpr_detector import OpenALPRDetector
+    detector = OpenALPRDetector()
 else:
     detector = YOLODetector(weights_path="yolov8n.pt")
 
@@ -70,8 +75,11 @@ def process_video(uploaded_file):
     all_results = []
     while True:
         ret, frame = cap.read()
-        if not ret or frame_count > 100:
+        if not ret:
             break
+        if frame_count % frame_skip != 0:
+            frame_count += 1
+            continue
         boxes = detector.detect_plates(frame)
         tracked = tracker.track_plates(boxes, frame)
         for t in tracked:

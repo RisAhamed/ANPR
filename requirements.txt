@@ -11,3 +11,4 @@ roboflow
 mlflow
 dagshub
 paddleocr
+openaplr
