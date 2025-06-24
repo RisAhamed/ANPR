@@ -4,6 +4,10 @@ opencv-python
 streamlit
 pytesseract
 supervision
-inference
+# inference
+paddlepaddle
 filterpy 
 roboflow
+mlflow
+dagshub
+paddleocr

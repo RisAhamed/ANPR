@@ -5,4 +5,4 @@ project = rf.workspace("objectdetection-twsk1").project("licenseplate-mswpd-lbgr
 version = project.version(1)
 
 dataset = version.download("yolov8")
-
+ 
