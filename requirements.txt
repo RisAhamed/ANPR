@@ -12,3 +12,4 @@ mlflow
 dagshub
 paddleocr
 openaplr
+hyperlpr

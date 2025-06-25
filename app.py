@@ -7,6 +7,8 @@ import os
 
 from detectors.yolo_detector import YOLODetector
 from recognizers.paddleocr_recognizer import PaddleOCRRecognizer
+from recognizers.easyocr_recognizer import EasyOCRRecognizer
+from recognizers.hyperlpr_recognizer import HyperLPRRecognizer
 from tracking.deepsort_tracker import DeepSortTracker
 from tracking.bytetrack_tracker import ByteTrackTracker
 
@@ -14,7 +16,7 @@ from tracking.bytetrack_tracker import ByteTrackTracker
 st.sidebar.title("Model Selection")
 
 detector_name = st.sidebar.selectbox("Detection Model", ["YOLOv8n finetuned", "YOLOv8m", "YOLOv8l", "OpenALPR"])
-ocr_name = st.sidebar.selectbox("OCR Model", ["PaddleOCR"])
+ocr_name = st.sidebar.selectbox("OCR Model", ["PaddleOCR", "EasyOCR", "HyperLPR"])
 tracker_name = st.sidebar.selectbox("Tracker", ["DeepSORT", "ByteTrack"])
 # Frame skipping for real-time
 frame_skip = st.sidebar.slider("Frame Skip Interval", 1, 10, 3)
@@ -36,6 +38,10 @@ else:
 
 if ocr_name == "PaddleOCR":
     recognizer = PaddleOCRRecognizer()
+elif ocr_name == "EasyOCR":
+    recognizer = EasyOCRRecognizer()
+elif ocr_name == "HyperLPR":
+    recognizer = HyperLPRRecognizer()
 else:
     recognizer = PaddleOCRRecognizer()
 
@@ -44,18 +50,47 @@ if tracker_name == "DeepSORT":
 else:
     tracker = ByteTrackTracker()
 
+def preprocess_plate(plate_img_rgb):
+    # Resize to at least 160px width
+    h, w = plate_img_rgb.shape[:2]
+    if w < 160:
+        scale = 160 / w
+        plate_img_rgb = cv2.resize(plate_img_rgb, (160, int(h * scale)), interpolation=cv2.INTER_CUBIC)
+    # Convert to grayscale and enhance contrast
+    gray = cv2.cvtColor(plate_img_rgb, cv2.COLOR_RGB2GRAY)
+    eq = cv2.equalizeHist(gray)
+    return eq
+
 def process_image(uploaded_file):
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
     boxes = detector.detect_plates(image)
+    st.write(f"YOLOv8 detected {len(boxes)} plates.")
     results = []
-    for box in boxes:
+    for i, box in enumerate(boxes):
         x1, y1, x2, y2, conf = box
+        st.write(f"Box {i}: ({x1}, {y1}, {x2}, {y2}), conf={conf:.2f}")
         plate_img = image[y1:y2, x1:x2]
         if plate_img.size == 0:
+            st.write(f"Box {i} crop is empty, skipping.")
             continue
         plate_img_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
-        text, ocr_conf = recognizer.recognize_plate(plate_img_rgb)
+        st.image(plate_img_rgb, caption=f"Crop {i}", use_column_width=False)
+        preprocessed = preprocess_plate(plate_img_rgb)
+        st.image(preprocessed, caption=f"Preprocessed Crop {i}", use_column_width=False)
+        # Try selected OCR engine
+        text, ocr_conf = recognizer.recognize_plate(preprocessed)
+        st.write(f"{ocr_name} OCR result for box {i}: '{text}' (conf={ocr_conf:.2f})")
+        # Fallback to EasyOCR if PaddleOCR fails
+        if not text and ocr_name != "EasyOCR":
+            easyocr_rec = EasyOCRRecognizer()
+            text, ocr_conf = easyocr_rec.recognize_plate(preprocessed)
+            st.write(f"EasyOCR fallback result for box {i}: '{text}' (conf={ocr_conf:.2f})")
+        # Fallback to HyperLPR if both fail
+        if not text and ocr_name != "HyperLPR":
+            hyperlpr_rec = HyperLPRRecognizer()
+            text, ocr_conf = hyperlpr_rec.recognize_plate(plate_img_rgb)
+            st.write(f"HyperLPR fallback result for box {i}: '{text}' (conf={ocr_conf:.2f})")
         if text:
             results.append({
                 'plate': text,
