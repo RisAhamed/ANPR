@@ -59,7 +59,8 @@ def preprocess_plate(plate_img_rgb):
     # Convert to grayscale and enhance contrast
     gray = cv2.cvtColor(plate_img_rgb, cv2.COLOR_RGB2GRAY)
     eq = cv2.equalizeHist(gray)
-    return eq
+    eq_rgb = cv2.cvtColor(eq, cv2.COLOR_GRAY2RGB)  # Ensure 3 channels for PaddleOCR
+    return eq_rgb
 
 def process_image(uploaded_file):
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
@@ -75,9 +76,9 @@ def process_image(uploaded_file):
             st.write(f"Box {i} crop is empty, skipping.")
             continue
         plate_img_rgb = cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB)
-        st.image(plate_img_rgb, caption=f"Crop {i}", use_column_width=False)
+        st.image(plate_img_rgb, caption=f"Crop {i}", use_container_width=False)
         preprocessed = preprocess_plate(plate_img_rgb)
-        st.image(preprocessed, caption=f"Preprocessed Crop {i}", use_column_width=False)
+        st.image(preprocessed, caption=f"Preprocessed Crop {i}", use_container_width=False)
         # Try selected OCR engine
         text, ocr_conf = recognizer.recognize_plate(preprocessed)
         st.write(f"{ocr_name} OCR result for box {i}: '{text}' (conf={ocr_conf:.2f})")
@@ -151,7 +152,7 @@ def main():
         file_type = uploaded_file.type
         if 'image' in file_type:
             image, plates = process_image(uploaded_file)
-            st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption='Annotated Image', use_column_width=True)
+            st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption='Annotated Image', use_container_width=True)
             results = plates
         elif 'video' in file_type:
             st.video(uploaded_file)
