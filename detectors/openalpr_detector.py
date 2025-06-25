@@ -27,19 +27,18 @@ import sys
 # --- IMPORTANT ---
 # Define the base path to your OpenALPR installation
 # This is the folder that contains alpr.exe, openalpr.conf, and the runtime_data folder
-OPENALPR_PATH = r'C:\Users\riswa\Downloads\openalpr-2.3.0-win-64bit\openalpr_64'
+OPENALPR_PATH = r'openalpr_64'
 # -----------------
 
 # (Keep your existing imports and the OPENALPR_PATH variable)
 import os
 import sys
 
-# --- Your OPENALPR_PATH should be here ---
-OPENALPR_PATH = r'C:\Users\riswa\Downloads\openalpr-2.3.0-win-64bit\openalpr_64'
+
 # ------------------------------------------
 
 class OpenALPRDetector:
-    def __init__(self, country='us'):
+    def __init__(self, country='india'):
         """
         Initializes the OpenALPR detector.
         """
