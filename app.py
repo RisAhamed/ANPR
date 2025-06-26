@@ -78,11 +78,19 @@ def process_image(uploaded_file):
             st.image(cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB), caption=f"Crop {i} (Original)", use_container_width=True)
 
         # De-skew and clean the plate for OCR (THE ACCURACY FIX)
-        preprocessed_plate = deskew_and_clean_plate(plate_img)
-        st.image(preprocessed_plate, caption=f"Crop {i} (De-skewed)", use_container_width=True)
+        # ... inside the `for i, box in enumerate(boxes):` loop ...
 
-        # Perform OCR
-        raw_text, ocr_conf = recognizer.recognize_plate(preprocessed_plate)
+# De-skew and clean the plate for OCR (THE ACCURACY FIX)
+            preprocessed_plate_mono = deskew_and_clean_plate(plate_img) # mono-channel output
+            st.image(preprocessed_plate_mono, caption=f"Crop {i} (Final for OCR)", use_container_width=True)
+
+            # Convert back to 3-channel for EasyOCR
+            preprocessed_plate_bgr = cv2.cvtColor(preprocessed_plate_mono, cv2.COLOR_GRAY2BGR)
+
+            # Perform OCR
+            raw_text, ocr_conf = recognizer.recognize_plate(preprocessed_plate_bgr) # Pass BGR image
+
+        
         
         # Clean the text (Post-processing)
         plate_text = clean_plate_text(raw_text)
@@ -147,16 +155,21 @@ def process_video(uploaded_file):
             else:
                 # This is a new track or a low-confidence one, so we run OCR
                 plate_img = frame[y1:y2, x1:x2]
-                if plate_img.size > 0:
-                    # Pre-process for accuracy
-                    preprocessed_plate = deskew_and_clean_plate(plate_img)
-                    raw_text, ocr_conf = recognizer.recognize_plate(preprocessed_plate)
-                    plate_text = clean_plate_text(raw_text)
 
-                    # If the new OCR is better, update the history
-                    if plate_text and ocr_conf > track_history[track_id]['confidence']:
-                        track_history[track_id] = {'plate': plate_text, 'confidence': ocr_conf}
-                else:
+
+            if plate_img.size > 0:
+                # Pre-process for accuracy
+                preprocessed_plate_mono = deskew_and_clean_plate(plate_img)
+                preprocessed_plate_bgr = cv2.cvtColor(preprocessed_plate_mono, cv2.COLOR_GRAY2BGR)
+                
+                raw_text, ocr_conf = recognizer.recognize_plate(preprocessed_plate_bgr)
+                plate_text = clean_plate_text(raw_text)
+
+                # If the new OCR is better, update the history
+                if plate_text and ocr_conf > track_history[track_id]['confidence']:
+                    track_history[track_id] = {'plate': plate_text, 'confidence': ocr_conf}
+
+            else:
                     plate_text = track_history[track_id]['plate'] # Use old text if crop fails
 
             # Draw bounding box and text on the frame
