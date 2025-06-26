@@ -1,15 +1,10 @@
+streamlit
+numpy
+opencv-python-headless
 ultralytics
 easyocr
-opencv-python
-streamlit
+deep-sort-realtime
+scipy
+pandas
 pytesseract
-supervision
-# inference
-paddlepaddle
-filterpy 
-roboflow
-mlflow
-dagshub
-paddleocr
-openaplr
-hyperlpr
+
