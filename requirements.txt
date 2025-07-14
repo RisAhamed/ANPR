@@ -7,4 +7,6 @@ deep-sort-realtime
 scipy
 pandas
 pytesseract
-
+keras-ocr
+tensorflow
+filterpy

@@ -2,31 +2,6 @@ import cv2
 import numpy as np
 from scipy.spatial import distance as dist
 
-def order_points(pts):
-    """
-    Orders the four points of a quadrilateral in top-left, top-right,
-    bottom-right, bottom-left order. This is crucial for perspective transform.
-    """
-    # Sort the points based on their x-coordinates
-    xSorted = pts[np.argsort(pts[:, 0]), :]
-
-    # Grab the left-most and right-most points from the sorted x-roodinate points
-    leftMost = xSorted[:2, :]
-    rightMost = xSorted[2:, :]
-
-    # Now, sort the left-most coordinates according to their y-coordinates
-    # so we can grab the top-left and bottom-left points, respectively
-    leftMost = leftMost[np.argsort(leftMost[:, 1]), :]
-    (tl, bl) = leftMost
-
-    # Now that we have the top-left coordinate, use it as an anchor to
-    # calculate the Euclidean distance between the top-left and right-most
-    # points; the point with the largest distance will be the bottom-right
-    D = dist.cdist(tl[np.newaxis], rightMost, "euclidean")[0]
-    (br, tr) = rightMost[np.argsort(D)[::-1], :]
-
-    # Return the coordinates in top-left, top-right, bottom-right, and bottom-left order
-    return np.array([tl, tr, br, bl], dtype="float32")
 
 def deskew_and_clean_plate(plate_img):
     """
