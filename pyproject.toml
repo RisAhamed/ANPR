@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "anpr"
+version = "1.0.0"
+description = "Automatic Number Plate Recognition — YOLO + EasyOCR + DeepSORT/SORT"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "Riswan Ahamed"}]
+keywords = ["anpr", "license-plate", "yolo", "ocr", "streamlit"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+  "streamlit>=1.35",
+  "numpy<2",
+  "opencv-python-headless>=4.9",
+  "ultralytics>=8.2",
+  "easyocr>=1.7",
+  "deep-sort-realtime>=1.3",
+  "scipy>=1.11",
+  "pandas>=2.0",
+  "python-dotenv>=1.0",
+  "filterpy>=1.4",
+]
+
+[project.urls]
+Repository = "https://github.com/RisAhamed/ANPR"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]

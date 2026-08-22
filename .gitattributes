@@ -1,0 +1,13 @@
+# ── Git LFS for large model weights ─────────────────────
+*.pt filter=lfs diff=lfs merge=lfs -text
+*.pth filter=lfs diff=lfs merge=lfs -text
+*.onnx filter=lfs diff=lfs merge=lfs -text
+*.bin filter=lfs diff=lfs merge=lfs -text
+*.pkl filter=lfs diff=lfs merge=lfs -text
+*.mp4 filter=lfs diff=lfs merge=lfs -text
+# Keep test_video small exception — track normally (optional)
+# Uncomment to exclude test_video from LFS:
+# test_video.mp4 -filter -diff -merge text
+
+# ── Linguist ──────────────────────────────────────────
+*.pt linguist-language=Python

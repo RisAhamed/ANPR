@@ -1,12 +1,32 @@
-streamlit
-numpy
-opencv-python-headless
-ultralytics
-easyocr
-deep-sort-realtime
-scipy
-pandas
-pytesseract
-keras-ocr
-tensorflow
-filterpy
+# ── ANPR pinned production requirements ───────────────
+# Core
+streamlit==1.40.2
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+scipy==1.14.1
+pandas==2.2.3
+python-dotenv==1.0.1
+filterpy==1.4.5
+
+# Detection
+ultralytics==8.3.0
+# NOTE: ultralytics pulls torch/torchvision — pin if needed:
+# torch==2.4.1 --index-url https://download.pytorch.org/whl/cpu
+# torchvision==0.19.1
+
+# OCR — pick what you use (easyocr is default for app.py)
+easyocr==1.7.2
+# keras-ocr / tensorflow only needed if you run final_ocr_keras.py
+# keras-ocr==0.9.3
+# tensorflow==2.16.1
+
+# Tracking
+deep-sort-realtime==1.3.2
+
+# Optional extras — uncomment as needed
+# pytesseract==0.3.10
+# supervision==0.22.0
+# roboflow==1.1.37
+# transformers==4.44.2
+# mlflow==2.15.1
+# dagshub==0.3.11

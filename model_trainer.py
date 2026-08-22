@@ -1,101 +1,93 @@
-# Load model directly
-# from transformers import AutoImageProcessor, AutoModelForObjectDetection
-
-# processor = AutoImageProcessor.from_pretrained("nickmuchi/yolos-small-finetuned-license-plate-detection")
-# model = AutoModelForObjectDetection.from_pretrained("nickmuchi/yolos-small-finetuned-license-plate-detection")
+"""
+YOLO training with MLflow + DagsHub — secrets via env.
+"""
 import os
 import warnings
-from ultralytics import YOLO, settings
+from pathlib import Path
+
+from dotenv import load_dotenv
+load_dotenv()
+
+from ultralytics import YOLO
 import mlflow
 import dagshub
-
+import anpr_config as cfg
 
 warnings.simplefilter("ignore", UserWarning)
 warnings.filterwarnings("ignore")
 
 
-CONFIG = {
-"mlflow_tracking_uri": "https://dagshub.com/RisAhamed/ANPR.mlflow",
-"dagshub_repo_owner": "RisAhamed",
-"dagshub_repo_name": "ANPR",
-"bucket_name": "ANPR",
-"endpoint_url": "https://dagshub.com/api/v1/repo-buckets/s3/RisAhamed",
-"public_key_id": "822dabf3de2f482e09baa3a4dd7259fafbc8bda8"
-}
-
-
-def setup_mlflow_tracking():
+def setup_mlflow_tracking() -> bool:
+    token = cfg.DAGSHUB_TOKEN
+    if not token:
+        print("WARN: DAGSHUB_TOKEN not set — skipping MLflow/DagsHub tracking.")
+        return False
     try:
-        # Set MLflow tracking URI
-        mlflow.set_tracking_uri(CONFIG["mlflow_tracking_uri"])
-
-        # Initialize DagsHub
-        dagshub.init(
-            repo_owner=CONFIG["dagshub_repo_owner"], 
-            repo_name=CONFIG["dagshub_repo_name"], 
-            mlflow=True
-        )
-        
-        # Set environment variables for authentication
-        os.environ["MLFLOW_TRACKING_USERNAME"] = CONFIG["public_key_id"]
-        os.environ["MLFLOW_TRACKING_PASSWORD"] = CONFIG["public_key_id"]
-        
-        # Set experiment name
+        mlflow.set_tracking_uri(cfg.MLFLOW_TRACKING_URI)
+        dagshub.init(repo_owner=cfg.DAGSHUB_REPO_OWNER, repo_name=cfg.DAGSHUB_REPO_NAME, mlflow=True)
+        os.environ["MLFLOW_TRACKING_USERNAME"] = token
+        os.environ["MLFLOW_TRACKING_PASSWORD"] = token
         mlflow.set_experiment("ANPR")
-    
         print("MLflow and DagsHub tracking setup successful.")
+        return True
     except Exception as e:
-     print(f"Error setting up MLflow tracking: {e}")
-
-def train_yolov8(model_size="yolov8x", data_path="LicensePlate-1/data.yaml", epochs=50):
-
-
-    setup_mlflow_tracking()
+        print(f"Error setting up MLflow tracking: {e}")
+        return False
 
 
-    with mlflow.start_run():
+def train_yolov8(model_size="yolov8n", data_path="LicensePlate-1/data.yaml", epochs=50):
+    use_mlflow = setup_mlflow_tracking()
+
+    # context manager only if mlflow available
+    ctx = mlflow.start_run() if use_mlflow else _noop_context()
+    with ctx:
         try:
-        # Load model (n = nano, s = small, m = medium, l = large, x = extra)
             model = YOLO(f"{model_size}.pt")
 
-                # Log training parameters
-            mlflow.log_params({
+            if use_mlflow:
+                mlflow.log_params({
                     "model_size": model_size,
                     "data_path": data_path,
                     "epochs": epochs,
                     "image_size": 640,
-                    "batch_size": 16
+                    "batch_size": 16,
                 })
 
-                # Train the model
             results = model.train(
-                    data=data_path,
-                    epochs=epochs,
-                    imgsz=640,
-                    batch=16,
-                    project="anpr-yolov8",
-                    name=f"{model_size}-finetuned",
-                    exist_ok=True
-                )
+                data=data_path,
+                epochs=epochs,
+                imgsz=640,
+                batch=16,
+                project="runs/detect",
+                name=f"{model_size}-finetuned",
+                exist_ok=True,
+            )
 
-                # Validate the model
             model.val()
 
-                # Log metrics (assuming results contains performance metrics)
-            if hasattr(results, 'box'):
+            if use_mlflow and hasattr(results, 'box'):
                 mlflow.log_metrics({
-                    "precision": results.box.map,
-                    "recall": results.box.mar,
-                    "mAP50": results.box.map50,
-                    "mAP50-95": results.box.map
+                    "mAP50": float(getattr(results.box, 'map50', 0) or 0),
+                    "mAP50-95": float(getattr(results.box, 'map', 0) or 0),
                 })
-
-                # Log the trained model
-            mlflow.log_artifact(f"runs/detect/anpr-yolov8/{model_size}-finetuned/weights/best.pt")
+                best = Path(f"runs/detect/{model_size}-finetuned/weights/best.pt")
+                if best.exists():
+                    mlflow.log_artifact(str(best))
 
         except Exception as e:
-            mlflow.log_param("training_error", str(e))
+            if use_mlflow:
+                try:
+                    mlflow.log_param("training_error", str(e))
+                except Exception:
+                    pass
             print(f"Training error: {e}")
-        
-if __name__ =="__main__":
+            raise
+
+
+class _noop_context:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+
+
+if __name__ == "__main__":
     train_yolov8()

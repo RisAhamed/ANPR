@@ -1,235 +1,254 @@
-import streamlit as st
+"""
+ANPR Streamlit App — production-grade
+- Central config via anpr_config.py / .env
+- Health checks, logging, graceful fallbacks
+- Supports image + video with tracking + selective OCR
+"""
+import logging
+import os
+import tempfile
+from collections import defaultdict
+from pathlib import Path
+
 import cv2
 import numpy as np
-import tempfile
 import pandas as pd
-import os
-from collections import defaultdict
+import streamlit as st
+from dotenv import load_dotenv
 
-# Import your project modules
+load_dotenv()
+
+import anpr_config as cfg
 from detectors.yolo_detector import YOLODetector
 from recognizers.easyocr_recognizer import EasyOCRRecognizer
 from tracking.deepsort_tracker import DeepSortTracker
-from utils import deskew_and_clean_plate, clean_plate_text  # Our new utility functions
+from utils import clean_plate_text, deskew_and_clean_plate
 
-# --- Model Loading (Cached for Performance) ---
-@st.cache_resource
-def load_detector(model_path):
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ── Page config ───────────────────────────────────────
+st.set_page_config(
+    page_title="ANPR System",
+    page_icon="🚗",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── Cached model loaders ──────────────────────────────
+@st.cache_resource(show_spinner="Loading detection model…")
+def load_detector(model_path: Path):
     return YOLODetector(weights_path=model_path)
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading OCR engine…")
 def load_recognizer():
-    # We will focus on EasyOCR as it's robust and simpler to manage
     return EasyOCRRecognizer()
 
-@st.cache_resource
+@st.cache_resource(show_spinner="Loading tracker…")
 def load_tracker():
     return DeepSortTracker()
 
-# --- Main App UI ---
-st.sidebar.title("Model and Parameters")
-# For simplicity, we will fix the models to the best-performing ones first.
-# You can re-add the selectbox later if needed.
-detector_name = "YOLOv8n finetuned"
-ocr_name = "EasyOCR"
-tracker_name = "DeepSORT"
-st.sidebar.info(f"Detector: **{detector_name}**\n\nOCR: **{ocr_name}**\n\nTracker: **{tracker_name}**")
+# ── Resolve model path ────────────────────────────────
+# Prefer plate model for single-stage demo; fallback to vehicle model, then base yolo
+candidate_paths = [
+    cfg.PLATE_MODEL_PATH,
+    Path("models/number_plated/number_plates_model.pt"),
+    Path("models/vehicle_detection_model/best.pt"),
+    Path("yolov8n.pt"),
+    Path("yolo11n.pt"),
+]
+model_path = next((p for p in candidate_paths if Path(p).exists()), None)
 
-# Confidence Threshold
-conf_threshold = st.sidebar.slider("Detection Confidence Threshold", 0.0, 1.0, 0.4, 0.05)
-frame_skip = st.sidebar.slider("Frame Processing Interval", 1, 10, 2)
+# ── Sidebar ───────────────────────────────────────────
+st.sidebar.title("⚙️ Settings")
+st.sidebar.caption(f"OCR: **EasyOCR** | Tracker: **DeepSORT/SORT**")
+conf_threshold = st.sidebar.slider("Detection confidence", 0.0, 1.0, float(cfg.PLATE_CONF), 0.05)
+frame_skip = st.sidebar.slider("Frame interval (video)", 1, 10, 2)
+st.sidebar.divider()
+st.sidebar.caption(f"Model: `{model_path}`" if model_path else "⚠️ No model found")
+if model_path:
+    st.sidebar.caption(f"Device: `{cfg.DEVICE}`")
 
-# --- Load Models ---
-# Correct path handling
-model_path = os.path.join("yolov8n-finetuned", "weights", "best.pt")
-if not os.path.exists(model_path):
-    st.error(f"FATAL: The fine-tuned model 'best.pt' was not found at {model_path}. Please ensure the model file is in the correct directory.")
+# ── Validate model ────────────────────────────────────
+if model_path is None:
+    st.error(
+        "No YOLO weights found. Expected one of:\n"
+        + "\n".join(f"- `{p}`" for p in candidate_paths)
+        + "\n\nAdd model weights to `models/` or set `ANPR_PLATE_MODEL` in `.env`."
+    )
     st.stop()
-    
-detector = load_detector(model_path)
-recognizer = load_recognizer()
-tracker = load_tracker()
 
-# --- Image Processing Function (with Accuracy Fixes) ---
+try:
+    detector = load_detector(model_path)
+    recognizer = load_recognizer()
+    tracker = load_tracker()
+except Exception as e:
+    logger.exception("Model load failed")
+    st.error(f"Failed to load models: {e}")
+    st.stop()
+
+# ── Helpers ───────────────────────────────────────────
 def process_image(uploaded_file):
     file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
     image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-    
-    # Use the confidence threshold from the UI
+    if image is None:
+        st.error("Could not decode image.")
+        return None, []
+
     boxes = detector.detect_plates(image, conf_threshold=conf_threshold)
-    st.write(f"Detected {len(boxes)} potential plates.")
-    
+    st.write(f"Detected **{len(boxes)}** potential plates.")
+
     results = []
-    
-    # Create columns for displaying crops
     if boxes:
-        cols = st.columns(len(boxes))
-    
+        cols = st.columns(min(len(boxes), 4))
+
     for i, box in enumerate(boxes):
         x1, y1, x2, y2, conf = box
+        h, w = image.shape[:2]
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
         plate_img = image[y1:y2, x1:x2]
-        
         if plate_img.size == 0:
-            st.write(f"Box {i} crop is empty, skipping.")
+            st.write(f"Box {i} crop empty — skipping.")
             continue
 
-        # Show original crop
-        with cols[i]:
-            st.image(cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB), caption=f"Crop {i} (Original)", use_container_width=True)
+        if boxes and i < len(cols):
+            with cols[i]:
+                st.image(cv2.cvtColor(plate_img, cv2.COLOR_BGR2RGB), caption=f"Crop {i} (original)", use_container_width=True)
 
-        # De-skew and clean the plate for OCR (THE ACCURACY FIX)
-        # ... inside the `for i, box in enumerate(boxes):` loop ...
+        preprocessed_mono = deskew_and_clean_plate(plate_img)
+        if boxes and i < len(cols):
+            with cols[i]:
+                st.image(preprocessed_mono, caption=f"Crop {i} (preprocessed)", use_container_width=True)
 
-# De-skew and clean the plate for OCR (THE ACCURACY FIX)
-            preprocessed_plate_mono = deskew_and_clean_plate(plate_img) # mono-channel output
-            st.image(preprocessed_plate_mono, caption=f"Crop {i} (Final for OCR)", use_container_width=True)
-
-            # Convert back to 3-channel for EasyOCR
-            preprocessed_plate_bgr = cv2.cvtColor(preprocessed_plate_mono, cv2.COLOR_GRAY2BGR)
-
-            # Perform OCR
-            raw_text, ocr_conf = recognizer.recognize_plate(preprocessed_plate_bgr) # Pass BGR image
-
-        
-        
-        # Clean the text (Post-processing)
+        preprocessed_bgr = cv2.cvtColor(preprocessed_mono, cv2.COLOR_GRAY2BGR)
+        raw_text, ocr_conf = recognizer.recognize_plate(preprocessed_bgr)
         plate_text = clean_plate_text(raw_text)
 
-        st.write(f"Result for Crop {i}: **{plate_text}** (Raw: '{raw_text}', Conf: {ocr_conf:.2f})")
+        st.write(f"Result {i}: **{plate_text or '—'}** (raw: `{raw_text}` conf: {ocr_conf:.2f})")
 
         if plate_text:
-            results.append({
-                'plate': plate_text,
-                'confidence': ocr_conf,
-                'box': (x1, y1, x2, y2)
-            })
-            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 3)
-            cv2.putText(image, plate_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            
+            results.append({"plate": plate_text, "confidence": round(float(ocr_conf), 3), "box": (x1, y1, x2, y2)})
+            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(image, plate_text, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+
     return image, results
 
-# --- Video Processing Function (with Performance Fixes) ---
+
 def process_video(uploaded_file):
-    temp_video = tempfile.NamedTemporaryFile(delete=False, suffix='.mp4')
-    temp_video.write(uploaded_file.read())
-    temp_video.close()
-    
-    cap = cv2.VideoCapture(temp_video.name)
-    frame_count = 0
-    
-    # This dictionary will store the OCR result for each tracked ID
-    # to avoid re-processing. Structure: {track_id: {'plate': '...', 'confidence': 0.9}}
-    track_history = defaultdict(lambda: {'plate': None, 'confidence': 0.0})
-    
-    # Setup Streamlit placeholders
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+    tmp.write(uploaded_file.read())
+    tmp.close()
+
+    cap = cv2.VideoCapture(tmp.name)
+    if not cap.isOpened():
+        st.error("Could not open video.")
+        return []
+
+    track_history: dict = defaultdict(lambda: {"plate": None, "confidence": 0.0})
     st_frame = st.empty()
-    st_results_header = st.sidebar.header('Detected Plates')
     st_results_container = st.sidebar.empty()
-    
+    frame_count = 0
     results_list = []
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-            
-        # Process only every Nth frame
-        if frame_count % frame_skip != 0:
+
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_count % frame_skip != 0:
+                frame_count += 1
+                continue
+
+            boxes = detector.detect_plates(frame, conf_threshold=conf_threshold)
+            tracked = tracker.track_plates(boxes, frame)
+
+            for x1, y1, x2, y2, track_id in tracked:
+                track_id = int(track_id)
+                # skip OCR if already high-confidence
+                if track_history[track_id]["confidence"] > 0.85:
+                    plate_text = track_history[track_id]["plate"]
+                else:
+                    plate_img = frame[y1:y2, x1:x2]
+                    if plate_img.size == 0:
+                        plate_text = track_history[track_id]["plate"]
+                    else:
+                        mono = deskew_and_clean_plate(plate_img)
+                        bgr = cv2.cvtColor(mono, cv2.COLOR_GRAY2BGR)
+                        raw_text, ocr_conf = recognizer.recognize_plate(bgr)
+                        plate_text = clean_plate_text(raw_text)
+                        if plate_text and ocr_conf > track_history[track_id]["confidence"]:
+                            track_history[track_id] = {"plate": plate_text, "confidence": float(ocr_conf)}
+                        else:
+                            plate_text = track_history[track_id]["plate"] or plate_text
+
+                if plate_text:
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(frame, f"ID {track_id}: {plate_text}", (x1, y1 - 8),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+            st_frame.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption=f"Frame {frame_count}", use_container_width=True)
+
+            current = [{"track_id": tid, "plate": d["plate"], "confidence": round(d["confidence"], 3)}
+                       for tid, d in track_history.items() if d["plate"]]
+            if current:
+                df = pd.DataFrame(current).sort_values("track_id")
+                st_results_container.dataframe(df, use_container_width=True)
+                results_list = df.to_dict("records")
+
             frame_count += 1
-            continue
+    finally:
+        cap.release()
+        try:
+            os.unlink(tmp.name)
+        except Exception:
+            pass
 
-        # 1. Detection
-        boxes = detector.detect_plates(frame, conf_threshold=conf_threshold)
-        
-        # 2. Tracking
-        # Note: Ensure your tracker returns a list of [x1, y1, x2, y2, track_id]
-        tracked_objects = tracker.track_plates(boxes, frame)
-        
-        # 3. Selective OCR (THE PERFORMANCE FIX)
-        for t in tracked_objects:
-            x1, y1, x2, y2, track_id = map(int, t)
-            
-            # If we have already processed this track_id with high confidence, skip
-            if track_history[track_id]['confidence'] > 0.85: # High confidence threshold
-                plate_text = track_history[track_id]['plate']
-            else:
-                # This is a new track or a low-confidence one, so we run OCR
-                plate_img = frame[y1:y2, x1:x2]
-
-
-            if plate_img.size > 0:
-                # Pre-process for accuracy
-                preprocessed_plate_mono = deskew_and_clean_plate(plate_img)
-                preprocessed_plate_bgr = cv2.cvtColor(preprocessed_plate_mono, cv2.COLOR_GRAY2BGR)
-                
-                raw_text, ocr_conf = recognizer.recognize_plate(preprocessed_plate_bgr)
-                plate_text = clean_plate_text(raw_text)
-
-                # If the new OCR is better, update the history
-                if plate_text and ocr_conf > track_history[track_id]['confidence']:
-                    track_history[track_id] = {'plate': plate_text, 'confidence': ocr_conf}
-
-            else:
-                    plate_text = track_history[track_id]['plate'] # Use old text if crop fails
-
-            # Draw bounding box and text on the frame
-            if plate_text:
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.putText(frame, f"ID {track_id}: {plate_text}", (x1, y1 - 10), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-
-        # Display the processed frame
-        st_frame.image(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB), caption=f'Processing Frame {frame_count}', use_container_width=True)
-        
-        # Update the results in the sidebar
-        current_results = [
-            {'track_id': tid, 'plate': data['plate'], 'confidence': data['confidence']} 
-            for tid, data in track_history.items() if data['plate']
-        ]
-        
-        # Create a DataFrame for cleaner display
-        if current_results:
-            df = pd.DataFrame(current_results).sort_values(by='track_id')
-            st_results_container.dataframe(df)
-            results_list = df.to_dict('records')
-
-        frame_count += 1
-        
-    cap.release()
-    os.unlink(temp_video.name)
-    
-    st.success("Video processing complete.")
+    st.success(f"Done — {frame_count} frames, {len(results_list)} unique plates.")
     return results_list
 
 
+# ── Main ──────────────────────────────────────────────
 def main():
-    st.title('ANPR System - Real-World Edition')
-    st.write('Upload an image or video. The system will detect, track, and read license plates.')
-    
-    uploaded_file = st.file_uploader('Upload Image or Video', type=['jpg', 'jpeg', 'png', 'mp4', 'avi', 'mov'])
-    
-    if uploaded_file:
-        file_type = uploaded_file.type
-        
-        if 'image' in file_type:
-            image, plates = process_image(uploaded_file)
-            st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption='Annotated Image', use_container_width=True)
-            results = plates
-        elif 'video' in file_type:
-            with st.spinner('Processing video... this may take a moment.'):
-                results = process_video(uploaded_file)
-        else:
-            st.error('Unsupported file type.')
-            results = []
+    st.title("🚗 ANPR — Automatic Number Plate Recognition")
+    st.caption("Detect → Track → OCR  •  YOLO + EasyOCR + DeepSORT/SORT  •  Production build")
 
-        if results:
-            st.sidebar.header('Final Results')
-            df_final = pd.DataFrame(results)
-            st.sidebar.dataframe(df_final)
-            csv = df_final.to_csv(index=False).encode('utf-8')
-            st.sidebar.download_button('Download Results as CSV', csv, 'final_plates.csv', 'text/csv')
-        else:
-            st.sidebar.write('No plates with sufficient confidence were found.')
+    with st.expander("ℹ️ How it works", expanded=False):
+        st.markdown("""
+        1. **Detection** — YOLO (OBB-capable) finds vehicles/plates
+        2. **Tracking** — DeepSORT (fallback: SORT/IOU) keeps IDs across frames
+        3. **OCR** — Deskew + CLAHE + Otsu + EasyOCR (allowlist A-Z0-9)
+        4. Adjust **confidence** and **frame interval** in the sidebar.
+        """)
 
-if __name__ == '__main__':
+    uploaded = st.file_uploader("Upload image or video", type=["jpg", "jpeg", "png", "mp4", "avi", "mov"])
+    if not uploaded:
+        st.info("👆 Upload a file to start. Try `test_video.mp4` or any plate image.")
+        return
+
+    ctype = uploaded.type or ""
+    if "image" in ctype:
+        image, plates = process_image(uploaded)
+        if image is not None:
+            st.image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), caption="Annotated", use_container_width=True)
+        results = plates
+    elif "video" in ctype:
+        with st.spinner("Processing video…"):
+            results = process_video(uploaded)
+    else:
+        st.error("Unsupported file type.")
+        results = []
+
+    if results:
+        st.sidebar.divider()
+        st.sidebar.header("📋 Final results")
+        df_final = pd.DataFrame(results)
+        st.sidebar.dataframe(df_final, use_container_width=True)
+        csv = df_final.to_csv(index=False).encode("utf-8")
+        st.sidebar.download_button("⬇️ Download CSV", csv, "plates.csv", "text/csv")
+    else:
+        if uploaded:
+            st.sidebar.write("No confident plates found — try lowering the threshold.")
+
+if __name__ == "__main__":
     main()

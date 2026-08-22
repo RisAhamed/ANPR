@@ -1,6 +1,21 @@
 import cv2
+import logging
 import numpy as np
 from scipy.spatial import distance as dist
+
+logger = logging.getLogger(__name__)
+
+
+def order_points(pts: np.ndarray) -> np.ndarray:
+    """Order 4 points as tl, tr, br, bl."""
+    rect = np.zeros((4, 2), dtype="float32")
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]  # tl
+    rect[2] = pts[np.argmax(s)]  # br
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]  # tr
+    rect[3] = pts[np.argmax(diff)]  # bl
+    return rect
 
 
 def deskew_and_clean_plate(plate_img):
